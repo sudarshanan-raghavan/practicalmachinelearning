@@ -1,0 +1,299 @@
+---
+title: "Prediction of Human Exercise Activity Quality using Accelerometer Data"
+author: "Sudarshanan K Raghavan"
+date: "02/05/2021"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.path = "./figures/")
+```
+
+## Synopsis
+In this project, the primary goal is to predict the manner in which people perform activities using accelerometer data from the devices that they wear on their person.
+
+For this project, we used the HAR or Human Activity Recognition data from the Groupware website. Two separate data sets were used, namely the training data set and the testing data set. More information regarding the original data can be found in the ***Credits*** section of this report.
+
+We trained four models using the training data, namely Decision Tree, Random Forest, Gradient Boosted Tree and Support Vector Machines. We used cross validation to train the classifiers. For this, we split our training data set into two parts, namely, a training data set and a validation data set. Our analysis showed us that Random Forest was the best classifier for this data.
+
+We then used it to predict the activity quality from the testing data set.
+
+## Notes
+- Certain trivial code chunks such as loading packages, removal of variables, unloading packages, etc., are not echoed.
+- The structures of the training and testing data sets are the same, except for the last column, which is dealt with in the ***Cleaning, Analyzing and Preprocessing the Data*** subsection of the ***Data Processing*** section of this report.
+- Even though transformations that are performed on the training data are also performed simultaneously on the testing data, please note that all analyses are performed only on the training data set.
+- Please note that the classifiers are trained and validated only using the training data set.
+- The final prediction results for this report are done only on the testing data set.
+
+## Credits
+The data for this project comes from the **[Groupware](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har)** website. The training data set can be found **[here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)** and the testing data set can be found **[here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)**. The website and data for this project were accessed and downloaded on ***May 2, 2021***.
+
+## Data Processing
+### Loading the Data and the required Packages
+For this project, we used the "dplyr" package for manipulating data frames, the "caret" package for building classifiers, the "ggcorrplot" package for plotting correlation matrices and the "rattle" package for plotting decision trees.
+
+```{r echo = FALSE, message = FALSE, results = FALSE, warning = FALSE}
+library(dplyr)
+library(caret)
+library(ggcorrplot)
+library(rattle)
+```
+
+We downloaded the training and testing data from the URLs mentioned above and stored them in the data frames "traindat" and "testdat".
+
+```{r message = FALSE, results = FALSE, cache = TRUE}
+urltrain <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+urltest <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+if(!file.exists("trainingdata.csv"))
+{
+  download.file(urltrain, destfile = "trainingdata.csv")
+}
+if(!file.exists("testingdata.csv"))
+{
+  download.file(urltest, destfile = "testingdata.csv")
+}
+traindat <- read.csv("trainingdata.csv")
+testdat <- read.csv("testingdata.csv")
+```
+
+```{r echo = FALSE, message = FALSE, results = FALSE}
+rm(urltrain, urltest)
+```
+
+### Cleaning, Analysing and Preprocessing the Data
+The "traindat" data frame has **19622** observations of **160** variables and the "testdat" data frame has **20** observations of **160** variables. We noted that the last columns of the two did not match. The last column of the "traindat" data frame is "classe", which is what we are trying to predict, while the last column of the "testdat" data frame is "problem_id", which has no impact on our analysis. So, we renamed that to "classe" as well, so that we can store the predicted "classe" values in it later.
+
+```{r echo = FALSE, message = FALSE, results = FALSE}
+names(testdat)[160] <- "classe"
+```
+
+Please note that all variables but the "classe" variable will be referred to as predictors in this report. So, "traindat" has **19622** observations of **159** predictors and "testdat" has **20** observations of **159** predictors.
+
+We noted that the first seven columns of the data sets are not particularly meaningful as covariates for building classifiers, so we removed them.
+
+```{r message = FALSE, results = FALSE}
+traindat <- select(traindat, -c(1:7))
+```
+
+We need to perform the same transformation on the testing data.
+
+```{r message = FALSE, results = FALSE}
+testdat <- select(testdat, -c(1:7))
+```
+
+This leaves us with **152** predictors, both in the training data and the testing data.
+
+Let's see whether the data sets have any missing values.
+
+```{r}
+mean(is.na(traindat))
+mean(is.na(testdat))
+```
+
+We see that about **43%** of the training data are missing and about **65%** of the testing data are missing. Let's look at the training data set to see how many rows and columns have missing data in them.
+
+```{r}
+sum(apply(traindat, 1, function(x) any(is.na(x))))
+sum(apply(traindat, 2, function(x) any(is.na(x))))
+```
+
+We can see that **19216** out of the **19622** rows have missing values in them, whereas only **67** out of the **152** predictors have missing values. This may be due to some device related issues, so we eliminated predictors that have missing values, rather than the observations themselves.
+
+```{r message = FALSE, results = FALSE}
+traindat <- select_if(traindat, ~ !any(is.na(.)))
+trainnonanames <- names(traindat)
+```
+
+We need to perform the same transformation on the testing data.
+
+```{r message = FALSE, results = FALSE}
+testdat <- select(testdat, all_of(trainnonanames))
+```
+
+```{r echo = FALSE, message = FALSE, results = FALSE}
+rm(trainnonanames)
+```
+
+This leaves us with **85** predictors, both in the training data and the testing data.
+
+We then investigated the variability in the training data set, particularly paying attention to whether there are predictors with nearly zero variance. We then removed those predictors from the training data.
+
+```{r message = FALSE, results = FALSE}
+trainnzvindices <- nearZeroVar(traindat[-c(86)])
+traindat <- select(traindat, -all_of(trainnzvindices))
+```
+
+We need to perform the same transformation on the testing data.
+
+```{r message = FALSE, results = FALSE}
+testdat <- select(testdat, -all_of(trainnzvindices))
+```
+
+```{r echo = FALSE, message = FALSE, results = FALSE}
+rm(trainnzvindices)
+```
+
+This leaves us with **52** predictors, both in the training data and the testing data.
+
+We then checked to see if the testing data had any missing values after these transformations and it had none.
+
+```{r}
+sum(is.na(testdat))
+```
+
+The reason for doing this is that if there were any missing values in the testing data, we would have to impute those values with neutral values, which could be fairly complicated. As such, there are no missing values now in "testdat".
+
+We converted the "classe" variable to factor and the remaining ones to numeric.
+
+```{r echo = FALSE, message = FALSE, results = FALSE}
+traindat$classe <- as.factor(traindat$classe)
+traindat[-c(53)] <- sapply(traindat[-c(53)], as.numeric)
+```
+
+We need to perform the same transformations on the testing data.
+
+```{r echo = FALSE, message = FALSE, results = FALSE}
+testdat$classe <- as.factor(testdat$classe)
+testdat[-c(53)] <- sapply(testdat[-c(53)], as.numeric)
+```
+
+Note that the "classe" column in "testdat" is virtually used nowhere in this project, except at the end, where we generate the final predicted values.
+
+After removing predictors with near zero variability in them, we then checked if certain predictors are highly correlated with each other. For this, we calculated the correlation matrix of the predictors and plotted it as a heatmap.
+
+```{r message = FALSE, results = FALSE, fig.width = 8, fig.height = 8}
+traindatvar <- traindat[-c(53)]
+traincor <- cor(traindatvar)
+ggcorrplot(traincor)
+```
+
+```{r echo = FALSE, message = FALSE, results = FALSE}
+dev.off()
+```
+
+Considering any correlation value more than **0.8** as strongly correlated, we removed those predictors from the training data set.
+
+```{r message = FALSE, results = FALSE}
+namescor <- c("roll_belt", "pitch_belt", "total_accel_belt", "accel_belt_x",
+              "accel_belt_y", "gyros_arm_x", "accel_arm_x", "magnet_arm_y",
+              "pitch_dumbbell", "yaw_dumbbell", "gyros_dumbbell_x",
+              "gyros_dumbbell_z", "gyros_forearm_y")
+traindat <- select(traindat, -all_of(namescor))
+```
+
+We need to perform the same transformation on the testing data.
+
+```{r message = FALSE, results = FALSE}
+testdat <- select(testdat, -all_of(namescor))
+```
+
+```{r echo = FALSE, message = FALSE, results = FALSE}
+rm(traindatvar, traincor, namescor)
+```
+
+This leaves us with **39** predictors, both in the training data and the testing data.
+
+## Building the Classifiers
+### Preparing the Data and Setting the Parameters for Training
+We first split our preprocessed training data set into two parts, namely, a training data set and a validation data set. This is required to perform cross validation while training our classifiers. We split it so that the training data has about **60%** of the data and the validation data has about **40%** of the data. The seed was set at **2021**.
+
+```{r message = FALSE, results = FALSE}
+set.seed(2021)
+trainind <- createDataPartition(traindat$classe, p = 0.6, list = FALSE)
+valdat <- traindat[-trainind, ]
+traindat <- traindat[trainind, ]
+```
+
+```{r echo = FALSE, message = FALSE, results = FALSE}
+rm(trainind)
+```
+
+We then set our cross validation parameters in the "trainControl" function.
+
+```{r message = FALSE, results = FALSE}
+ctrl <- trainControl(method = "cv", number = 3, verboseIter = FALSE)
+```
+
+The method we will use is the k-folds cross validation or "cv" method. The number of folds is set at **3**. The parameter "verboseIter" is set to **FALSE**, as otherwise, it will print all iterations on the console.
+
+```{r echo = FALSE, message = FALSE, results = FALSE}
+tableMTD <- matrix(nrow = 4, ncol = 2)
+rownames(tableMTD) <- c("DT", "RF", "GBT", "SVM")
+colnames(tableMTD) <- c("Accuracy", "OOS Error")
+```
+
+### Training the Classifiers
+We trained four classifiers in this project, namely, Decision Tree, Random Forest, Gradient Boosted Tree and Support Vector Machines.
+
+```{r message = FALSE, results = FALSE, cache = TRUE}
+fitDT <- train(classe ~ ., data = traindat, method = "rpart",
+               trControl = ctrl)
+fitRF <- train(classe ~ ., data = traindat, method = "rf",
+               trControl = ctrl)
+fitGBT <- train(classe ~ ., data = traindat, method = "gbm",
+                trControl = ctrl, verbose = FALSE)
+fitSVM <- train(classe ~ ., data = traindat, method = "svmLinear",
+                trControl = ctrl, verbose = FALSE)
+```
+
+We then predicted the "classe" values in the validation data set using all the four classifiers.
+
+```{r message = FALSE, results = FALSE}
+predDT <- predict(fitDT, valdat)
+predRF <- predict(fitRF, valdat)
+predGBT <- predict(fitGBT, valdat)
+predSVM <- predict(fitSVM, valdat)
+```
+
+Let's look at the confusion matrices for the four classifiers by checking the predicted "classe" values against the actual "classe" values in the validation data set.
+
+```{r}
+DTconmat <- confusionMatrix(predDT, valdat$classe)
+DTconmat$table
+RFconmat <- confusionMatrix(predRF, valdat$classe)
+RFconmat$table
+GBTconmat <- confusionMatrix(predGBT, valdat$classe)
+GBTconmat$table
+SVMconmat <- confusionMatrix(predSVM, valdat$classe)
+SVMconmat$table
+```
+
+A quick analysis of the confusion matrices tells us that Random Forest and Gradient Boosted Tree have performed well. Let's look at their accuracies and expected out of sample errors.
+
+```{r echo = FALSE, message = FALSE}
+tableMTD[1, 1] <- DTconmat$overall["Accuracy"]
+tableMTD[1, 2] <- 1 - DTconmat$overall["Accuracy"]
+tableMTD[2, 1] <- RFconmat$overall["Accuracy"]
+tableMTD[2, 2] <- 1 - RFconmat$overall["Accuracy"]
+tableMTD[3, 1] <- GBTconmat$overall["Accuracy"]
+tableMTD[3, 2] <- 1 - GBTconmat$overall["Accuracy"]
+tableMTD[4, 1] <- SVMconmat$overall["Accuracy"]
+tableMTD[4, 2] <- 1 - SVMconmat$overall["Accuracy"]
+tableMTD
+```
+
+We can see that Random Forest has the highest prediction accuracy of about **99%**. From this, we can say that our expected out of sample error would be about **1%**.
+
+```{r echo = FALSE, message = FALSE, results = FALSE}
+rm(traindat, valdat, ctrl, predDT, predRF, predGBT, predSVM, DTconmat, RFconmat, GBTconmat, SVMconmat, tableMTD, fitDT, fitGBT, fitSVM)
+```
+
+## Prediction on the Test Data
+Since Random Forest was the best classifier out of the four, we will use it to predict the "classe" values for the testing data set "testdat". Note that the "testdat" data frame was not used for any analysis or training. Only the preprocessing done on the training data was reflected in the testing data.
+
+```{r}
+testpred <- predict(fitRF, testdat)
+testdat$classe <- testpred
+testdat$classe
+```
+
+We recorded our predicted "classe" values in the last column of "testdat".
+
+```{r echo = FALSE, message = FALSE, results = FALSE}
+rm(fitRF, testpred, testdat)
+detach(package:dplyr)
+detach(package:caret)
+detach(package:ggcorrplot)
+detach(package:rattle)
+```
